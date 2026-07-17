@@ -1,0 +1,117 @@
+schemaVersion: "2"
+kind: mixin
+name: ask-data
+displayName: Ask Data
+description: >
+  Snowflake analytics + Google Drive output for customer work.
+  Uses the claude.ai snowflake-sql MCP connector and the hivemind /ask-data skill.
+  OAuth token refresh is handled by the sbx proxy — no browser required in the sandbox.
+
+requires:
+  agent: claude
+
+permissions:
+  network:
+    allow:
+      # Snowflake MCP server (VPN required on host)
+      - uh65063-docker.snowflakecomputing.com
+      - "*.snowflakecomputing.com"
+
+      # Google Drive / Docs / Sheets
+      - "*.googleapis.com"
+      - accounts.google.com
+      - "*.googleusercontent.com"
+      - drive.google.com
+
+      # GitHub — hivemind clone
+      - github.com
+      - api.github.com
+      - codeload.github.com
+      - objects.githubusercontent.com
+      - raw.githubusercontent.com
+
+      # npm — gws install
+      - registry.npmjs.org
+
+credentials:
+  - service: snowflake-sql
+    description: "OAuth token for the claude.ai snowflake-sql MCP connector"
+    required: true
+    oauth:
+      tokenEndpoint:
+        host: PLACEHOLDER_TOKEN_ENDPOINT_HOST  # TODO: confirm with sbx/platform team (likely platform.claude.com or similar)
+        path: PLACEHOLDER_TOKEN_ENDPOINT_PATH  # TODO: confirm (likely /v1/oauth/token or similar)
+      resourceHosts:
+        - uh65063-docker.snowflakecomputing.com
+      sentinels:
+        accessToken: sk-ant-oat01-proxy-managed
+        refreshToken: sk-ant-ort01-proxy-managed
+      credentialFile:
+        path: "~/.claude/.credentials.json"
+        structure:
+          claudeAiOauth:
+            accessToken: "{{.AccessToken}}"
+            refreshToken: "{{.RefreshToken}}"
+
+  - service: github
+    description: "GitHub token for hivemind schema reference clone"
+    apiKey:
+      name: GITHUB_TOKEN
+      inject:
+        - domain: github.com
+          scheme: basic
+          username: x-access-token
+        - domain: api.github.com
+          scheme: bearer
+        - domain: raw.githubusercontent.com
+          scheme: bearer
+        - domain: codeload.github.com
+          scheme: bearer
+        - domain: objects.githubusercontent.com
+          scheme: bearer
+
+environment:
+  variables:
+    HIVEMIND_ROOT: /opt/hivemind
+
+setup:
+  install:
+    - command: "npm install -g @googleworkspace/cli@0.22.5"
+      description: Install gws CLI for Google Drive / Docs / Sheets
+
+    - command: |
+        if [ -z "${GITHUB_TOKEN:-}" ] || [ "${GITHUB_TOKEN}" = "proxy-managed" ]; then
+          echo "WARNING: GITHUB_TOKEN not set — skipping hivemind clone. Schema reference files will be unavailable." >&2
+        else
+          git clone --depth=1 "https://${GITHUB_TOKEN}@github.com/docker/hivemind.git" /opt/hivemind \
+            && echo "hivemind cloned OK" \
+            || echo "WARNING: hivemind clone failed." >&2
+        fi
+      description: Clone hivemind schema reference repo
+
+agentInstructions:
+  content: |
+    ## Ask Data environment
+
+    Use `/ask-data [question]` to query Docker's Snowflake data warehouse and write
+    formatted results to Google Drive for customer work.
+
+    ### Snowflake
+    - MCP tool: `mcp__claude_ai_snowflake-sql__sql_exec_tool`
+    - Auth is handled by the sbx OAuth credential — no /mcp browser flow needed
+    - Schema reference docs: ${HIVEMIND_ROOT}/team-workspaces/data_analysts/skills/snowflake/reference/
+    - VPN required on host
+
+    ### Google Drive output
+    After a query, write formatted results to Drive using gws:
+    - New Google Doc:  `gws docs create --title "..." --body "..."`
+    - New Sheet:       `gws sheets create --title "..."`
+    - Upload file:     `gws drive upload <file>`
+    Run `gws login` once per sandbox if not yet authenticated.
+
+    ### One-time host setup
+    The snowflake-sql OAuth credential must be set up once outside sbx (browser required):
+      sbx secret set snowflake-sql   # follow the interactive prompt
+
+    GitHub token for hivemind schema docs (if not already set globally):
+      sbx secret set -g github
