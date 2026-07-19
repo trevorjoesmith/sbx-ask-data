@@ -32,6 +32,8 @@ permissions:
 
       # npm — gws install
       - registry.npmjs.org
+      - api.claude.ai
+      - claude.ai
 
 credentials:
   - service: snowflake-sql
